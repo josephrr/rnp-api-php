@@ -44,8 +44,8 @@
     },
     "minimum-stability": "stable",
     "support": {
-        "issues": "https://github.com/egobytes/rnp-api-php/issues",
-        "source": "https://github.com/egobytes/rnp-api-php",
+        "issues": "https://github.com/josephrr/rnp-api-php/issues",
+        "source": "https://github.com/josephrr/rnp-api-php",
         "docs": "https://rnp.egobytes.com/docs",
         "email": "soporte@egobytes.com"
     }
