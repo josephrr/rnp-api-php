@@ -6,6 +6,7 @@ namespace Egobytes\Rnp\Tests;
 
 use Egobytes\Rnp\Cliente;
 use Egobytes\Rnp\Consulta;
+use Egobytes\Rnp\ConsultaDekra;
 use Egobytes\Rnp\EstadoRegistral;
 use Egobytes\Rnp\RnpException;
 use Egobytes\Rnp\Saldo;
@@ -42,7 +43,23 @@ class ClienteTest extends TestCase
     {
         $this->expectException(InvalidArgumentException::class);
 
-        (new Cliente('rnp_x'))->porPlaca('BJK123', 'moto');
+        (new Cliente('rnp_x'))->porPlaca('BJK123', 'taxi');
+    }
+
+    public function test_rechaza_una_placa_de_dekra_con_guiones_sin_llamar_al_api(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        (new Cliente('rnp_x'))->dekraPorPlaca('BJK-123');
+    }
+
+    public function test_acepta_la_moto_escrita_como_en_la_placa_o_como_en_el_contrato(): void
+    {
+        $this->assertSame('MOT', Cliente::normalizarClase('MOT'));
+        $this->assertSame('MOT', Cliente::normalizarClase('moto'));
+        $this->assertSame('MOT', Cliente::normalizarClase('M'));
+        $this->assertSame('CL', Cliente::normalizarClase('cl'));
+        $this->assertSame('particular', Cliente::normalizarClase('particular'));
     }
 
     // ── Los tres estados registrales ──
@@ -113,6 +130,87 @@ class ClienteTest extends TestCase
         // Y no una cadena vacía, que se confundiría con un dato real.
         $this->assertNull($this->consultaDePrueba()->campo('color'));
         $this->assertNull($this->consultaDePrueba()->campo('no_existe'));
+    }
+
+    public function test_lee_lo_que_el_api_agrega_al_vehiculo(): void
+    {
+        $consulta = Consulta::desdeArray([
+            'datos' => [
+                'vehiculo' => ['marca' => 'TOYOTA'],
+                'vencimiento_dekra' => [
+                    'fecha' => '2028-02-29', 'placa' => 'BJK123', 'vigente' => true,
+                ],
+                'inspeccion_tecnica' => [
+                    'entidad' => 'Dekra', 'digito' => 3, 'mes' => 3, 'mes_nombre' => 'marzo',
+                ],
+                'estimaciones' => [
+                    'marchamo' => ['total' => 150000, 'referencial' => true, 'moneda' => 'CRC'],
+                    'traspaso' => null,
+                ],
+                'origen' => [
+                    'pais_fabricacion' => 'JAPAN', 'fabricante' => 'TOYOTA', 'anio_modelo' => 2019,
+                ],
+            ],
+            'completitud' => 'completa',
+            'cobrada'     => true,
+        ]);
+
+        $this->assertTrue($consulta->vencimientoDekra()['vigente']);
+        $this->assertSame('BJK123', $consulta->vencimientoDekra()['placa']);
+        $this->assertSame('marzo', $consulta->inspeccionTecnica()['mes_nombre']);
+        $this->assertSame(150000, $consulta->estimaciones()['marchamo']['total']);
+        $this->assertNull($consulta->estimaciones()['traspaso']);
+        $this->assertSame('JAPAN', $consulta->origen()['pais_fabricacion']);
+    }
+
+    public function test_un_dato_agregado_que_no_vino_queda_en_null(): void
+    {
+        $consulta = Consulta::desdeArray([
+            'datos' => [
+                'vencimiento_dekra'  => null,
+                'inspeccion_tecnica' => null,
+                'origen'             => null,
+            ],
+            'completitud' => 'completa',
+            'cobrada'     => true,
+        ]);
+
+        $this->assertNull($consulta->vencimientoDekra());
+        $this->assertNull($consulta->inspeccionTecnica());
+        $this->assertNull($consulta->origen());
+        $this->assertNull($consulta->estimaciones()['marchamo']);
+        $this->assertNull($consulta->estimaciones()['traspaso']);
+    }
+
+    public function test_la_consulta_de_dekra_no_se_cobra_y_puede_venir_sin_fecha(): void
+    {
+        $conFecha = ConsultaDekra::desdeArray([
+            'datos' => ['fecha' => '2028-02-29', 'placa' => 'BJK123', 'vigente' => true],
+            'cobrada'       => false,
+            'consultado_en' => '2026-10-13T08:00:00-06:00',
+            'request_id'    => '01JEXAMPLE',
+        ]);
+
+        $this->assertFalse($conFecha->cobrada);
+        $this->assertSame('2028-02-29', $conFecha->datos['fecha']);
+        $this->assertTrue($conFecha->vigente());
+        $this->assertSame('01JEXAMPLE', $conFecha->requestId);
+
+        $sinFecha = ConsultaDekra::desdeArray(['datos' => null, 'cobrada' => false]);
+
+        $this->assertNull($sinFecha->datos);
+        $this->assertNull($sinFecha->vigente());
+        $this->assertFalse($sinFecha->cobrada);
+    }
+
+    public function test_una_fecha_de_dekra_sin_vigente_no_se_lee_como_vencida(): void
+    {
+        $vieja = ConsultaDekra::desdeArray([
+            'datos'   => ['fecha' => '2028-02-29', 'placa' => 'BJK123'],
+            'cobrada' => false,
+        ]);
+
+        $this->assertNull($vieja->vigente());
     }
 
     public function test_una_respuesta_parcial_se_reconoce(): void

@@ -12,13 +12,24 @@ namespace Egobytes\Rnp;
  *
  *     echo $consulta->campo('marca');
  *     echo $consulta->saldo->total;
+ *     echo $consulta->vencimientoDekra()['fecha'] ?? 'sin fecha';
  *
- * Sin dependencias: solo cURL, que viene con PHP. Un cliente de dos endpoints
- * no justifica arrastrar un stack HTTP entero al proyecto de nadie.
+ * Sin dependencias: solo cURL, que viene con PHP. Tres endpoints no
+ * justifican arrastrar un stack HTTP entero al proyecto de nadie.
  */
 final class Cliente
 {
-    public const VERSION = '1.0.0';
+    public const VERSION = '1.1.0';
+
+    /** Lo que se escribe en `clase`, en mayúsculas, => la clave del contrato. */
+    private const CLASES = [
+        'PARTICULAR'   => 'particular',
+        'CL'           => 'CL',
+        'MOT'          => 'MOT',
+        'M'            => 'MOT',
+        'MOTO'         => 'MOT',
+        'MOTOCICLETA'  => 'MOT',
+    ];
 
     private const BASE_POR_DEFECTO = 'https://rnp.egobytes.com/api/v1';
 
@@ -53,26 +64,28 @@ final class Cliente
     /**
      * Consulta por placa.
      *
-     * En carga liviana va solo el número: el `CL` es la clase, no parte de la
-     * placa. `porPlaca('272490', 'CL')`, no `porPlaca('CL272490')`.
+     * En carga liviana y en moto va solo el número: el `CL` o la `M` son la
+     * clase, no parte de la placa. `porPlaca('272490', 'CL')`, no
+     * `porPlaca('CL272490')`. En moto, `porPlaca('123456', 'MOT')`.
      *
      * @throws RnpException
      */
     public function porPlaca(string $placa, string $clase = 'particular'): Consulta
     {
-        $placa = strtoupper(trim($placa));
+        return Consulta::desdeArray($this->consultar($this->rutaDePlaca($placa, $clase, '/vehiculos/placa/', 10)));
+    }
 
-        if (!preg_match('/^[A-Z0-9]{1,10}$/', $placa)) {
-            throw new \InvalidArgumentException('La placa se escribe sin guiones ni espacios.');
-        }
-
-        if (!in_array($clase, ['particular', 'CL'], true)) {
-            throw new \InvalidArgumentException("Clase no válida: '{$clase}'. Use 'particular' o 'CL'.");
-        }
-
-        $ruta = '/vehiculos/placa/' . rawurlencode($placa);
-
-        return $this->consultar($clase === 'CL' ? $ruta . '?clase=CL' : $ruta);
+    /**
+     * Solo el día en que vence la revisión técnica, según Dekra.
+     *
+     * No consulta el Registro y no descuenta saldo: `cobrada` es siempre
+     * false. Si Dekra no publica fecha, `datos` llega en null y no es un error.
+     *
+     * @throws RnpException
+     */
+    public function dekraPorPlaca(string $placa, string $clase = 'particular'): ConsultaDekra
+    {
+        return ConsultaDekra::desdeArray($this->consultar($this->rutaDePlaca($placa, $clase, '/dekra/placa/', 12)));
     }
 
     /**
@@ -88,7 +101,39 @@ final class Cliente
             throw new \InvalidArgumentException('El VIN se escribe sin guiones ni espacios.');
         }
 
-        return $this->consultar('/vehiculos/vin/' . rawurlencode($vin));
+        return Consulta::desdeArray($this->consultar('/vehiculos/vin/' . rawurlencode($vin)));
+    }
+
+    /**
+     * La clave canónica de la clase, o una excepción si no es ninguna.
+     *
+     * Acepta lo que dice la placa (`M`) y lo que dice el contrato (`MOT`),
+     * sin distinguir mayúsculas.
+     */
+    public static function normalizarClase(string $clase): string
+    {
+        $canonica = self::CLASES[strtoupper(trim($clase))] ?? null;
+
+        if ($canonica === null) {
+            throw new \InvalidArgumentException("Clase no válida: '{$clase}'. Use 'particular', 'CL' o 'MOT'.");
+        }
+
+        return $canonica;
+    }
+
+    /** Arma la ruta de una placa. El largo lo pone el endpoint, no la clase. */
+    private function rutaDePlaca(string $placa, string $clase, string $prefijo, int $maximo): string
+    {
+        $placa = strtoupper(trim($placa));
+
+        if (!preg_match('/^[A-Z0-9]{1,' . $maximo . '}$/', $placa)) {
+            throw new \InvalidArgumentException('La placa se escribe sin guiones ni espacios.');
+        }
+
+        $clase = self::normalizarClase($clase);
+        $ruta = $prefijo . rawurlencode($placa);
+
+        return $clase === 'particular' ? $ruta : $ruta . '?clase=' . rawurlencode($clase);
     }
 
     /**
@@ -96,14 +141,16 @@ final class Cliente
      *
      * Un 402 o un 404 dan lo mismo diez veces; reintentarlos solo gasta tiempo.
      * El límite por minuto sí se respeta esperando lo que el propio API indica.
+     *
+     * @return array<string, mixed>
      */
-    private function consultar(string $ruta): Consulta
+    private function consultar(string $ruta): array
     {
         $intento = 0;
 
         while (true) {
             try {
-                return Consulta::desdeArray($this->pedir($ruta));
+                return $this->pedir($ruta);
             } catch (RnpException $e) {
                 if ($intento >= $this->reintentos || !$e->esReintentable()) {
                     throw $e;

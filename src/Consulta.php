@@ -84,6 +84,70 @@ final readonly class Consulta
     }
 
     /**
+     * El día en que vence la revisión técnica según Dekra, o null.
+     *
+     * Trae `fecha` (`AAAA-MM-DD`), `placa` y `vigente`. `vigente` es true si
+     * esa fecha es hoy o posterior, en hora de Costa Rica. No es el mes de
+     * `inspeccionTecnica()`, que se deduce del último dígito.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function vencimientoDekra(): ?array
+    {
+        return $this->objeto('vencimiento_dekra');
+    }
+
+    /**
+     * El mes en que toca la inspección, deducido del último dígito de la placa.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function inspeccionTecnica(): ?array
+    {
+        return $this->objeto('inspeccion_tecnica');
+    }
+
+    /**
+     * Marchamo y traspaso estimados sobre el valor fiscal.
+     *
+     * Cada una en null cuando el Registro no publica ese valor. Son
+     * referenciales: no es lo que cobran el INS ni la notaría.
+     *
+     * @return array{marchamo: array<string, mixed>|null, traspaso: array<string, mixed>|null}
+     */
+    public function estimaciones(): array
+    {
+        $datos = $this->datos['estimaciones'] ?? null;
+
+        if (!is_array($datos)) {
+            return ['marchamo' => null, 'traspaso' => null];
+        }
+
+        return [
+            'marchamo' => is_array($datos['marchamo'] ?? null) ? $datos['marchamo'] : null,
+            'traspaso' => is_array($datos['traspaso'] ?? null) ? $datos['traspaso'] : null,
+        ];
+    }
+
+    /**
+     * País y planta según el VIN, o null si la NHTSA no lo conoce.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function origen(): ?array
+    {
+        return $this->objeto('origen');
+    }
+
+    /** @return array<string, mixed>|null */
+    private function objeto(string $clave): ?array
+    {
+        $datos = $this->datos[$clave] ?? null;
+
+        return is_array($datos) ? $datos : null;
+    }
+
+    /**
      * Un campo del vehículo, o null si el Registro no lo publica.
      *
      * `$consulta->campo('marca')` en vez de encadenar índices que revientan

@@ -2,7 +2,8 @@
 
 Cliente del API de consulta vehicular del **Registro Nacional de Costa Rica**.
 Consulta por placa o por VIN y devuelve características, motor, propietarios y
-situación registral.
+situación registral. Además trae el vencimiento de Dekra, el mes de la
+inspección, una estimación de marchamo y traspaso, y el origen del VIN.
 
 Sin dependencias: solo cURL, que ya viene con PHP.
 
@@ -46,6 +47,50 @@ $rnp->porPlaca('CL272490');          // no encuentra nada
 
 ```php
 $consulta = $rnp->porVin('8AJHA8CD704309461');
+```
+
+## Motocicleta
+
+La `M` de la placa es la clase, igual que el `CL`. Se acepta `MOT`, `M`,
+`MOTO` o `MOTOCICLETA`:
+
+```php
+$rnp->porPlaca('123456', 'MOT');
+$rnp->porPlaca('123456', 'M');       // lo mismo
+```
+
+## Lo que el API añade
+
+Cada consulta de vehículo trae cuatro datos que no salen del Registro. Si no
+se pueden calcular llegan en `null` y la respuesta igual se entrega:
+
+```php
+$consulta->vencimientoDekra();    // fecha, placa y vigente; o null
+$consulta->inspeccionTecnica();   // el mes que toca, por el último dígito
+$consulta->estimaciones();        // ['marchamo' => …, 'traspaso' => …]
+$consulta->origen();              // país y planta según el VIN, o null
+```
+
+`vigente` es `true` si la fecha es hoy o posterior, en hora de Costa Rica. El
+día de vencimiento todavía cuenta. `estimaciones()` no es el monto del INS ni
+de la notaría: cada rubro dice `referencial: true`. El marchamo trae
+`tipo_vehiculo` (`particular`, `moto` o `carga_liviana`) y `total` en colones.
+`origen()` cubre bien lo vendido en Estados Unidos; para el resto suele ir en
+`null`.
+
+## Solo la fecha de Dekra
+
+No consulta el Registro y no descuenta saldo. `cobrada` es siempre `false`.
+Si Dekra no publica fecha, `datos` llega en `null`: no es un error.
+
+```php
+$dekra = $rnp->dekraPorPlaca('BJK123');
+$dekra = $rnp->dekraPorPlaca('272490', 'CL');
+
+if ($dekra->datos !== null) {
+    echo $dekra->datos['fecha'];    // 2028-02-29
+    echo $dekra->vigente();         // true, false, o null si el campo no vino
+}
 ```
 
 ## Gravámenes y anotaciones
@@ -120,9 +165,9 @@ $rnp = new Cliente('rnp_su_clave', reintentos: 0);   // sin reintentos
 
 ## Cómo se cobra
 
-Se descuenta **una consulta por cada respuesta completa**. Si el Registro no
-responde, responde a medias o rechaza la petición, la consulta no se cobra, y
-la respuesta lo dice:
+Se descuenta **una consulta por cada respuesta completa** de placa o de VIN.
+`dekraPorPlaca()` no descuenta nunca. Si el Registro no responde, responde a
+medias o rechaza la petición, la consulta no se cobra, y la respuesta lo dice:
 
 ```php
 $consulta->cobrada;        // false cuando no se descontó
